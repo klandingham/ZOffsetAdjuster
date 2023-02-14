@@ -1,0 +1,10 @@
+{
+    "offset": {
+        "increment": "0.1",
+        "initial": "-2.00"
+    },
+    "temps": {
+        "bed": "60",
+        "extruder": "200"
+    }
+}

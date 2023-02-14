@@ -2,6 +2,9 @@
 # DONE: Automatically determine which port the printer is connected to
 # TODO: Timeout procedure that waits for input for a specified time <-- CURRENT WORK
 # TODO: Implement settings file
+import json
+import time
+
 import keyboard
 from select import select
 from pytimedinput import *
@@ -9,10 +12,13 @@ import serial
 import serial.tools.list_ports as port_list
 import signal
 
-# globals, may be overridden in settings file
-BED_TEMP = 75
-EXTRUDER_TEMP = 200
-OFFSET_TEST_TIMEOUT = 5         # number of seconds to wait during each Z offset test
+
+# globals
+BED_TEMP = 0
+EXTRUDER_TEMP = 0
+OFFSET_VALUE = 0.0
+OFFSET_INCREMENT = 0.0
+# OFFSET_TEST_TIMEOUT = 5         # number of seconds to wait during each Z offset test
 
 
 def find_printer():
@@ -86,10 +92,34 @@ def test_timed_input():
             print("User unfortunately declined to sell their first-born child!")
 
 
-printer_port = find_printer()
-# test_key_inputs()
-# exit(0)
+def test_output_overlay():
+    inc = 0.1
+    offset = -2.00
+    for i in range(1, 10):
+        print("\r Increment = %.2f , current offset = %.2f" % (inc, offset), end="")
+        offset += inc
+        inc += 0.01
+        time.sleep(1)
+    print("")
 
+
+def load_config():
+    with open("config.json", "r") as cfg:
+        config = json.load(cfg)
+    BED_TEMP = config["temps"]["bed"]
+    EXTRUDER_TEMP = config["temps"]["extruder"]
+    OFFSET_VALUE = config["offset"]["initial"]
+    OFFSET_INCREMENT = config["offset"]["increment"]
+
+    # NEXT: load settings into variables, list each with numbers, offer to edit any, or <ENTER> to accept
+
+# test_key_inputs()
+# test_output_overlay()
+load_config()
+exit(0)
+# end of testing code
+
+printer_port = find_printer()
 print("Opening printer port...", end="", flush=True)
 # printer = serial.Serial("COM4")
 printer = serial.Serial(printer_port)
@@ -112,13 +142,13 @@ print(response)
 # # while reading:
 #     # Wait until there is data waiting in the serial buffer
 #     # if printer.in_waiting > 0:
-    #     # Read data out of the buffer until a carriage return / new line is found
-    #     response = printer.readline()
-    #     sss = response.decode("Ascii").rstrip()
-    #     if sss == "ok":
-    #         reading = 0
-    #     # Print the contents of the serial data
-    #     print(sss)
+#     # Read data out of the buffer until a carriage return / new line is found
+#     response = printer.readline()
+#     sss = response.decode("Ascii").rstrip()
+#     if sss == "ok":
+#         reading = 0
+#     # Print the contents of the serial data
+#     print(sss)
 
 
 # test: home, set relative positioning, raise Z in loop, set absolute positioning
