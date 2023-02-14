@@ -1,13 +1,18 @@
 # Work in progress: Python script to facilitate setting Z probe offset
-# TODO: Automatically determine which port the printer is connected to <-- CURRENT WORK
-# TODO: Timeout procedure that waits for input for a specified time
+# DONE: Automatically determine which port the printer is connected to
+# TODO: Timeout procedure that waits for input for a specified time <-- CURRENT WORK
 # TODO: Implement settings file
-import time
+import keyboard
+from select import select
+from pytimedinput import *
 import serial
 import serial.tools.list_ports as port_list
+import signal
 
-# globals
-# printer_port_name = ""      # serial port for printer
+# globals, may be overridden in settings file
+BED_TEMP = 75
+EXTRUDER_TEMP = 200
+OFFSET_TEST_TIMEOUT = 5         # number of seconds to wait during each Z offset test
 
 
 def find_printer():
@@ -20,41 +25,101 @@ def find_printer():
         test_port = serial.Serial(port_name, timeout=3)
         test_port.write(b"M31 \r\n")
         rsp = test_port.readline().decode("Ascii").rstrip()
+        test_port.close()
         if len(rsp) > 0:
             print("found a printer at port " + port_name + ".")
+            return port_name
+    #         printers_discovered.append(port_name)
+    # if len(printers_discovered) > 1:
+    #     print("\nError: more than one printer found, please connect only one printer.")
+    #     exit(1)
+        else:
             printers_discovered.append(port_name)
-        test_port.close()
-    if len(printers_discovered) > 1:
-        print("\nError: more than one printer found, please connect only one printer.")
-        exit(1)
-    elif len(printers_discovered) < 1:
+    if len(printers_discovered) < 1:
         print("no printers found, exiting.")
         exit(1)
-    return port_name
+
+
+def send_sync_command(gcode_cmd, console_msg):
+    print(console_msg, flush=True)
+    reading = 1
+    printer_response = ""
+    print('Sending gcode: ' + gcode_cmd)
+    cmd_str = b''
+    cmd_str += gcode_cmd.encode("Ascii")
+    cmd_str += b' \r\n'
+    printer.write(cmd_str)
+    while reading:
+        # Wait until there is data waiting in the serial buffer
+        if printer.in_waiting > 0:
+            # Read data out of the buffer until a carriage return / new line is found
+            prt_response = printer.readline().decode("Ascii").rstrip()
+            if prt_response == "ok":
+                reading = 0
+            # Print the contents of the serial data
+            if prt_response != "echo:busy: processing":
+                print(prt_response) # KIP DEBUG
+                printer_response += prt_response
+    return printer_response
+
+
+def test_key_inputs():
+    while True:
+        event = keyboard.read_event()
+        if event.event_type == keyboard.KEY_DOWN:
+            key = event.name
+            print(f'Pressed: {key}')
+            if key == 'q':
+                break
+
+
+def test_timed_input():
+    user_text, timed_out = timedKey("Please, press 'y' to accept or 'n' to decline: ", allowCharacters="yn")
+    if timed_out:
+        print(">>>" + user_text + "<<<")
+        print("Timed out when waiting for input. Pester the user later.")
+    else:
+        print(">>>" + user_text + "<<<")
+        if user_text == "y":
+            print("User consented to selling their first-born child!")
+        else:
+            print("User unfortunately declined to sell their first-born child!")
 
 
 printer_port = find_printer()
-exit(0)
-# TODO: Auto-detect printer port (how?)
+# test_key_inputs()
+# exit(0)
 
-printer = serial.Serial("COM4")
+print("Opening printer port...", end="", flush=True)
+# printer = serial.Serial("COM4")
+printer = serial.Serial(printer_port)
+print("ok", flush=True)
+response = send_sync_command("M503", "Querying printer settings")
+print(response)
+response = send_sync_command("G0 Z20", "20")
+print(response)
+response = send_sync_command("G0 Z40", "40")
+print(response)
+# printer = serial.Serial(printer_port)
 # serialPort = serial.Serial(
 #     port="COM4", baudrate=9600, bytesize=8, timeout=2, stopbits=serial.STOPBITS_ONE
 # )
-printer.write(b"M503 \r\n")
+# print("Querying printer for settings...")
+# printer.write(b"M503 \r\n")
 # # s.write(b"G28 \r\n")
-response = ""  # Used to hold data coming over UART
-reading = 1
-while reading:
-    # Wait until there is data waiting in the serial buffer
-    if printer.in_waiting > 0:
-        # Read data out of the buffer until a carraige return / new line is found
-        response = printer.readline()
-        sss = response.decode("Ascii").rstrip()
-        if sss == "ok":
-            reading = 0
-        # Print the contents of the serial data
-        print(sss)
+# response = ""  # Used to hold data coming over UART
+# # reading = 1
+# # while reading:
+#     # Wait until there is data waiting in the serial buffer
+#     # if printer.in_waiting > 0:
+    #     # Read data out of the buffer until a carriage return / new line is found
+    #     response = printer.readline()
+    #     sss = response.decode("Ascii").rstrip()
+    #     if sss == "ok":
+    #         reading = 0
+    #     # Print the contents of the serial data
+    #     print(sss)
+
 
 # test: home, set relative positioning, raise Z in loop, set absolute positioning
 # pending question: if I send printer a command that takes some time to complete,
@@ -63,19 +128,23 @@ while reading:
 # Result: The initial sleep I tried wasn't long enough. The printer seemed to accept more
 # commands while it was still homing...when the homing finished, it increased the Z position.
 # So the commands in the for loop must have been put in some kind of queue.
-printer.write(b"G28\r\n")
-print("Waiting for home")
-time.sleep(10)
-print("Setting relative positioning")
-printer.write(b"G91\r\n")
-time.sleep(1)
-print("Increasing Z...")
-for i in range(6):
-    printer.write(b"G1 Z5\r\n")
-    time.sleep(1)
-    print(i)
-print("Setting absolute positioning")
-printer.write(b"G91\r\n")
+
+
+
+
+# printer.write(b"G28\r\n")
+# print("Waiting for home")
+# time.sleep(10)
+# print("Setting relative positioning")
+# printer.write(b"G91\r\n")
+# time.sleep(1)
+# print("Increasing Z...")
+# for i in range(6):
+#     printer.write(b"G1 Z5\r\n")
+#     time.sleep(1)
+#     print(i)
+# print("Setting absolute positioning")
+# printer.write(b"G91\r\n")
 
 print("End")
 # <editor-fold desc="Sample Code">
