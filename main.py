@@ -3,8 +3,22 @@
 # DONE: Implement settings file
 import json
 import time
+
+import keyboard
 import serial
 import serial.tools.list_ports as port_list
+
+
+def show_help():
+    print("")
+    print("Key Commands:")
+    print("\t down => move nozzle lower and retest")
+    print("\t   up => move nozzle higher and retest")
+    print("\t    + => increase move increment")
+    print("\t    - => decrease move increment")
+    print("\tenter => accept current offset")
+    print("\t    h => display help")
+    print("\t    q => quit without saving")
 
 
 class ZOffsetAdjuster:
@@ -14,7 +28,7 @@ class ZOffsetAdjuster:
     OFFSET_INCREMENT = 0.0
     PRINTER_PORT = ""
     PRINTER = None
-    INTER_CMD_SLEEP = 3
+    INTER_CMD_SLEEP = 1
 
     def init_printer(self):
         # open printer for I/O
@@ -22,7 +36,7 @@ class ZOffsetAdjuster:
         print("Printer port has been opened!")  # debug
         # self.preheat_bed()
         # self.preheat_extruder()
-        self.send_sync_cmd("G28")
+        # TODO: UNNEEDED? self.send_sync_cmd("G28", "Homing printer...")
 
     def send_printer_cmd(self, cmd):
         time.sleep(self.INTER_CMD_SLEEP)
@@ -122,23 +136,105 @@ class ZOffsetAdjuster:
         print("")
         return
 
-    def send_sync_cmd(self, cmd):
+    def send_sync_cmd(self, cmd, msg):
+        print(msg, end="")
+        time.sleep(1)
         printer = self.PRINTER
-        reading = 1
-        self.send_printer_cmd("M155 S1")
+        reading = True
         self.send_printer_cmd(cmd)
-        # while reading:
-        for i in range(0, 50):
+        while reading:
             # Wait until there is data waiting in the serial buffer
             if printer.in_waiting > 0:
                 # Read data out of the buffer until a carriage return / new line is found
                 prt_response = printer.readline().decode("Ascii").rstrip()
-                print(prt_response)
-                reading = 0
-        self.send_printer_cmd("M155 S1")
+                if prt_response == 'ok':
+                    reading = False
+        print("OK")
+
+    def home_printer(self):  # TODO: UNNEEDED?
+        print("Homing printer...", end="")
+        prt_response = ""
+        printer = self.PRINTER
+        reading = True
+        self.send_printer_cmd("G28")
+        while reading:
+            # Wait until there is data waiting in the serial buffer
+            if printer.in_waiting > 0:
+                # Read data out of the buffer until a carriage return / new line is found
+                prt_response = printer.readline().decode("Ascii").rstrip()
+            # printer should send "ok" when homing has completed
+            if prt_response == 'ok':
+                reading = False
+        print("OK")
+
+    def adjust_z_offset(self):
+        print("\nSetting up for Z-offset measurement...")
+        self.send_sync_cmd("M211 S1", "\tenabling software endstops...")
+        self.send_sync_cmd("M851 Z0", "\tclearing current Z-offset...")
+        self.send_sync_cmd("M500", "\tsaving settings to EEPROM...")
+        self.send_sync_cmd("G28", "\thoming printer...")
+        self.send_sync_move_cmd("G1 X110 Y110 F1000", "\tmoving nozzle to bed center...")
+        self.send_sync_cmd("M211 S0", "\tdisabling software endstops...")
+        print("Setup complete.\n")
+        self.obtain_z_offset()
+
+    def obtain_z_offset(self):
+        print("\nMeasuring Z-offset...\n")
+        print("Insert paper, press any key to continue...", end="")
+        offset = self.OFFSET_VALUE
+        increment = self.OFFSET_INCREMENT
+        offset_accepted = False
+        while not offset_accepted:
+            # TODO: NEXT:
+            #     1. move extruder up, then down by current offset
+            #     2. display current increment and offset w/o newline
+            print("\npress a command key (h for help): ", end="")
+            event = keyboard.read_event()
+            if event.event_type == keyboard.KEY_DOWN:
+                key = event.name
+                # print(f'Pressed: {key}')  # debug
+                # Note: using if's instead of case for older Pythons
+                if key == 'h':
+                    show_help()
+                elif key == 'q':
+                    break
+
+    def send_sync_move_cmd(self, move_command, msg):
+        print(msg, end="")
+        printer = self.PRINTER
+        # issue the move command
+        self.send_printer_cmd(move_command)
+        # cmd_str = b''
+        # cmd_str += "G1 X100 F500".encode("Ascii")
+        # cmd_str += b' \r\n'
+        # printer.write(cmd_str)
+        # block further command processing until move has finished
+        self.send_printer_cmd("M400")
+        # cmd_str = b''
+        # cmd_str += "M400".encode("Ascii")
+        # cmd_str += b' \r\n'
+        # printer.write(cmd_str)
+        # add a command to the queue: get print time
+        # will use the response to this command to determine that the move has finished
+        self.send_printer_cmd("M31")
+        # cmd_str = b''
+        # cmd_str += "M31".encode("Ascii")
+        # cmd_str += b' \r\n'
+        # printer.write(cmd_str)
+        move_finished = False
+        while not move_finished:
+            time.sleep(0.5)
+            # Wait until there is data waiting in the serial buffer
+            if printer.in_waiting > 0:
+                # Read data out of the buffer until a carriage return / new line is found
+                prt_response = printer.readline().decode("Ascii").rstrip()
+                if prt_response.startswith("echo:Print"):
+                    move_finished = True
+        print("OK")
 
 
 adjuster = ZOffsetAdjuster()
 adjuster.load_config()
 adjuster.find_printer()
 adjuster.init_printer()
+adjuster.adjust_z_offset()
