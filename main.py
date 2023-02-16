@@ -1,6 +1,8 @@
 # Work in progress: Python script to facilitate setting Z probe offset
 # DONE: Automatically determine which port the printer is connected to
 # DONE: Implement settings file
+# FIXME: With no printer connected, program seems to try to open printer anyway
+
 import json
 import time
 
@@ -11,14 +13,45 @@ import serial.tools.list_ports as port_list
 
 def show_help():
     print("")
+    print("\n")
     print("Key Commands:")
     print("\t down => move nozzle lower and retest")
     print("\t   up => move nozzle higher and retest")
     print("\t    + => increase move increment")
     print("\t    - => decrease move increment")
+    print("\t    r => repeat last test")
     print("\tenter => accept current offset")
     print("\t    h => display help")
     print("\t    q => quit without saving")
+    print("\n")
+
+
+def modify_increment(increment):
+    print("")
+    print("Use + and - keys to change increment value, press ENTER when done.")
+    modified_increment = increment
+    print("increment value = " + modified_increment, end="")
+    offset_accepted = False
+    while not offset_accepted:
+        event = keyboard.read_event()
+        if event.event_type == keyboard.KEY_DOWN:
+            key = event.name
+            if key == "+":
+                float_value = float(modified_increment)
+                float_value += .01
+                modified_increment = str(round(float_value, 2))
+                print("\rincrement value = " + modified_increment, end="")
+                continue
+            elif key == "-":
+                # TODO: convert string to float, adjust value, round to 2 decimal places, convert back to string
+                float_value = float(modified_increment)
+                float_value -= .01
+                modified_increment = str(round(float_value, 2))
+                print("\rincrement value = " + modified_increment, end="")
+                continue
+            elif key == 'enter':
+                offset_accepted = True
+    return modified_increment
 
 
 class ZOffsetAdjuster:
@@ -28,7 +61,7 @@ class ZOffsetAdjuster:
     OFFSET_INCREMENT = 0.0
     PRINTER_PORT = ""
     PRINTER = None
-    INTER_CMD_SLEEP = 1
+    INTER_CMD_SLEEP = 0.5
 
     def init_printer(self):
         # open printer for I/O
@@ -38,8 +71,8 @@ class ZOffsetAdjuster:
         # self.preheat_extruder()
         # TODO: UNNEEDED? self.send_sync_cmd("G28", "Homing printer...")
 
-    def send_printer_cmd(self, cmd):
-        time.sleep(self.INTER_CMD_SLEEP)
+    def send_printer_cmd(self, cmd, delay=INTER_CMD_SLEEP):
+        time.sleep(delay)
         cmd_str = b''
         cmd_str += cmd.encode("Ascii")
         cmd_str += b' \r\n'
@@ -136,9 +169,9 @@ class ZOffsetAdjuster:
         print("")
         return
 
-    def send_sync_cmd(self, cmd, msg):
+    def send_sync_cmd(self, cmd, msg, delay=INTER_CMD_SLEEP):
         print(msg, end="")
-        time.sleep(1)
+        time.sleep(delay)
         printer = self.PRINTER
         reading = True
         self.send_printer_cmd(cmd)
@@ -175,48 +208,73 @@ class ZOffsetAdjuster:
         self.send_sync_cmd("G28", "\thoming printer...")
         self.send_sync_move_cmd("G1 X110 Y110 F1000", "\tmoving nozzle to bed center...")
         self.send_sync_cmd("M211 S0", "\tdisabling software endstops...")
-        print("Setup complete.\n")
+        print("Setup complete.")
         self.obtain_z_offset()
 
     def obtain_z_offset(self):
-        print("\nMeasuring Z-offset...\n")
+        print("\nBeginning Z-offset testing...\n")
         print("Insert paper, press any key to continue...", end="")
+        print("")
+        event = keyboard.read_event()
         offset = self.OFFSET_VALUE
         increment = self.OFFSET_INCREMENT
         offset_accepted = False
+        increment_changed = False  # do not re-measure if only increment change
         while not offset_accepted:
-            # TODO: NEXT:
-            #     1. move extruder up, then down by current offset
-            #     2. display current increment and offset w/o newline
-            print("\npress a command key (h for help): ", end="")
+            print("\nOffset increment: " + increment + "\tOffset value: " + offset)
+            if not increment_changed:
+                self.send_sync_move_cmd("G0 Z10", msg=None, delay=0)
+                offset_cmd = "G0 Z" + offset
+                self.send_sync_move_cmd(offset_cmd, msg=None, delay=0)
+                print("Test paper drag now!\n")
+            print("press a command key (h for help): ", end="")
+            increment_changed = False
             event = keyboard.read_event()
             if event.event_type == keyboard.KEY_DOWN:
                 key = event.name
                 # print(f'Pressed: {key}')  # debug
                 # Note: using if's instead of case for older Pythons
-                if key == 'h':
+                if key == '-' or key == '+':
+                    new_increment = modify_increment(increment)
+                    if new_increment != increment:
+                        increment_changed = True
+                        increment = new_increment
+                elif key == 'down':  # move nozzle lower (make offset more negative)
+                    offset_float = float(offset)
+                    increment_float = float(increment)
+                    offset_float -= increment_float
+                    offset = str(round(offset_float, 2))
+                elif key == 'up':  # move nozzle higher (make offset less negative)
+                    offset_float = float(offset)
+                    increment_float = float(increment)
+                    offset_float += increment_float
+                    offset = str(round(offset_float, 2))
+                elif key == 'r':  # repeat last measurement
+                    continue
+                elif key == 'h':
                     show_help()
                 elif key == 'q':
                     break
 
-    def send_sync_move_cmd(self, move_command, msg):
-        print(msg, end="")
+    def send_sync_move_cmd(self, move_command, msg=None, delay=INTER_CMD_SLEEP):
+        if msg is not None:
+            print(msg, end="")
         printer = self.PRINTER
         # issue the move command
-        self.send_printer_cmd(move_command)
+        self.send_printer_cmd(move_command, delay)
         # cmd_str = b''
         # cmd_str += "G1 X100 F500".encode("Ascii")
         # cmd_str += b' \r\n'
         # printer.write(cmd_str)
         # block further command processing until move has finished
-        self.send_printer_cmd("M400")
+        self.send_printer_cmd("M400", delay)
         # cmd_str = b''
         # cmd_str += "M400".encode("Ascii")
         # cmd_str += b' \r\n'
         # printer.write(cmd_str)
         # add a command to the queue: get print time
         # will use the response to this command to determine that the move has finished
-        self.send_printer_cmd("M31")
+        self.send_printer_cmd("M31", delay)
         # cmd_str = b''
         # cmd_str += "M31".encode("Ascii")
         # cmd_str += b' \r\n'
@@ -230,7 +288,8 @@ class ZOffsetAdjuster:
                 prt_response = printer.readline().decode("Ascii").rstrip()
                 if prt_response.startswith("echo:Print"):
                     move_finished = True
-        print("OK")
+        if msg is not None:
+            print("OK")
 
 
 adjuster = ZOffsetAdjuster()
