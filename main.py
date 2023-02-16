@@ -15,11 +15,11 @@ def show_help():
     print("")
     print("\n")
     print("Key Commands:")
-    print("\t down => move nozzle lower and retest")
-    print("\t   up => move nozzle higher and retest")
-    print("\t    + => increase move increment")
-    print("\t    - => decrease move increment")
-    print("\t    r => repeat last test")
+    print("\t    - => move nozzle lower and retest")
+    print("\t    + => move nozzle higher and retest")
+    print("\t   up => increase move increment")
+    print("\t down => decrease move increment")
+    print("\t    r => repeat last test from height")
     print("\tenter => accept current offset")
     print("\t    h => display help")
     print("\t    q => quit without saving")
@@ -55,21 +55,24 @@ def modify_increment(increment):
 
 
 class ZOffsetAdjuster:
+    ABORTED = False
     BED_TEMP = 0
     EXTRUDER_TEMP = 0
+    INTER_CMD_SLEEP = 0.5
+    MOVEMENT_SPEED = "F4800"
     OFFSET_VALUE = 0.0
     OFFSET_INCREMENT = 0.0
     PRINTER_PORT = ""
     PRINTER = None
-    INTER_CMD_SLEEP = 0.5
+    Z_OFFSET = 0.0
 
     def init_printer(self):
         # open printer for I/O
         self.PRINTER = serial.Serial(self.PRINTER_PORT)
         print("Printer port has been opened!")  # debug
-        # self.preheat_bed()
-        # self.preheat_extruder()
-        # TODO: UNNEEDED? self.send_sync_cmd("G28", "Homing printer...")
+        # preheat
+        self.preheat_bed()
+        self.preheat_extruder()
 
     def send_printer_cmd(self, cmd, delay=INTER_CMD_SLEEP):
         time.sleep(delay)
@@ -123,6 +126,8 @@ class ZOffsetAdjuster:
                 prt_response = printer.readline().decode("Ascii").rstrip()
                 # split response to get bed heater level (will be >0 while bed is heating)
                 tokens1 = prt_response.split()
+                if prt_response.startswith("echo:busy"):
+                    continue
                 if len(tokens1) < 4:  # not a heating report
                     continue
                 # extract current bed temp
@@ -132,10 +137,9 @@ class ZOffsetAdjuster:
                 # extract bed heater level
                 tokens2 = tokens1[5].split(sep=":")
                 bed_heater_level = tokens2[1]
-                if bed_heater_level == '0':
+                if bed_heater_level == '0' and float(current_bed_temp) >= float(self.BED_TEMP):
                     reading = 0
         self.send_printer_cmd("M155 S0")
-        self.send_printer_cmd("M140 S0")  # TODO: remove this line after testing, turn heaters off on exit
         print("")
         return
 
@@ -165,7 +169,6 @@ class ZOffsetAdjuster:
                 if current_extruder_temp >= self.EXTRUDER_TEMP:
                     reading = 0
         self.send_printer_cmd("M155 S0")
-        self.send_printer_cmd("M109 S0")  # TODO: remove this line after testing, turn heaters off on exit
         print("")
         return
 
@@ -217,14 +220,18 @@ class ZOffsetAdjuster:
         print("")
         event = keyboard.read_event()
         offset = self.OFFSET_VALUE
+        offset_float = float(offset)
         increment = self.OFFSET_INCREMENT
         offset_accepted = False
+        test_from_height = False  # when true, raises nozzle before testing offset
         increment_changed = False  # do not re-measure if only increment change
         while not offset_accepted:
             print("\nOffset increment: " + increment + "\tOffset value: " + offset)
             if not increment_changed:
-                self.send_sync_move_cmd("G0 Z10", msg=None, delay=0)
-                offset_cmd = "G0 Z" + offset
+                if test_from_height:
+                    test_from_height = False
+                    self.send_sync_move_cmd("G0 Z10 " + self.MOVEMENT_SPEED, msg=None, delay=0)
+                offset_cmd = "G0 Z" + offset + " " + self.MOVEMENT_SPEED
                 self.send_sync_move_cmd(offset_cmd, msg=None, delay=0)
                 print("Test paper drag now!\n")
             print("press a command key (h for help): ", end="")
@@ -232,28 +239,34 @@ class ZOffsetAdjuster:
             event = keyboard.read_event()
             if event.event_type == keyboard.KEY_DOWN:
                 key = event.name
-                # print(f'Pressed: {key}')  # debug
+                print(f'Pressed: {key}')  # debug
                 # Note: using if's instead of case for older Pythons
-                if key == '-' or key == '+':
+                if key == 'up' or key == 'down':
                     new_increment = modify_increment(increment)
                     if new_increment != increment:
                         increment_changed = True
                         increment = new_increment
-                elif key == 'down':  # move nozzle lower (make offset more negative)
+                elif key == '-':  # move nozzle lower (make offset more negative)
                     offset_float = float(offset)
                     increment_float = float(increment)
                     offset_float -= increment_float
                     offset = str(round(offset_float, 2))
-                elif key == 'up':  # move nozzle higher (make offset less negative)
+                elif key == '+':  # move nozzle higher (make offset less negative)
                     offset_float = float(offset)
                     increment_float = float(increment)
                     offset_float += increment_float
                     offset = str(round(offset_float, 2))
                 elif key == 'r':  # repeat last measurement
+                    test_from_height = True
                     continue
                 elif key == 'h':
                     show_help()
+                elif key == 'enter':
+                    self.Z_OFFSET = offset_float
+                    print("Z-offset value of " + str(round(self.Z_OFFSET, 2)) + " accepted.")
+                    break
                 elif key == 'q':
+                    self.ABORTED = True
                     break
 
     def send_sync_move_cmd(self, move_command, msg=None, delay=INTER_CMD_SLEEP):
@@ -291,9 +304,32 @@ class ZOffsetAdjuster:
         if msg is not None:
             print("OK")
 
+    def finish_processing(self):
+        if not self.ABORTED:
+            print("\nFinishing up...")
+            self.send_sync_cmd("M211 S1", "\tre-enabling software endstops...")
+            self.send_sync_cmd("G92 Z0", "\tsetting Z = 0 to current Z position...")
+            cmd_str = "M851 Z" + str(round(self.Z_OFFSET, 2))
+            self.send_sync_cmd(cmd_str, "\tsaving Z-offset value...")
+            self.send_sync_cmd("M500", "\tsaving settings to EEPROM...")
+            self.send_printer_cmd("M140 S0", "\tturning off bed heater...")
+            self.send_printer_cmd("M109 S0", "\tturning off extruder heater...")
+            self.home_printer()
+            print("Finished, exiting...")
+            exit(0)
+        else:
+            print("\nProcessing aborted...")
+            self.send_sync_cmd("M211 S1", "\tre-enabling software endstops...")
+            self.send_printer_cmd("M140 S0", "\tturning off bed heater...")
+            self.send_printer_cmd("M109 S0", "\tturning off extruder heater...")
+            self.home_printer()
+            print("Exiting...")
+            exit(1)
+
 
 adjuster = ZOffsetAdjuster()
 adjuster.load_config()
 adjuster.find_printer()
 adjuster.init_printer()
 adjuster.adjust_z_offset()
+adjuster.finish_processing()

@@ -1,9 +1,9 @@
 TODO:
 
-1. Logic not finished yet, measurement method is close, but not quite done.
-2. Need to add ending code to finish command sequence (store offset, restore endstops, etc).
-3. Interaction within PyCharm seems OK, but when run from command prompt, print's are getting buffered.
-   Sometimes the output appears too late.
-4. Needs general clean up of code.
-5. Still want to make an installable package for this, so it will run on any Windows machine regardless
-   of whether or not Python is installed.
+- Before doing anything, script should obtain current value of Z-offset and restore it if user aborts
+- Needs general clean up of code.
+- Still want to make an installable package for this, so it will run on any Windows machine regardless
+  of whether or not Python is installed.
+- Add behavior when printer can't be found or is found but can't be opened (e.g., another app using
+  the port).
+- (Maybe) Add bed X,Y dimensions to the config file and use those.
