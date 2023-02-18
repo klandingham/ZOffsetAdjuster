@@ -26,7 +26,7 @@ def modify_increment(increment):
     print("")
     print("Use + and - keys to change increment value, press ENTER when done.")
     modified_increment = increment
-    print("increment value = " + modified_increment, end="")
+    print("increment value = {0:.2f}".format(float(modified_increment)), end="")
     offset_accepted = False
     while not offset_accepted:
         event = keyboard.read_event()
@@ -36,13 +36,13 @@ def modify_increment(increment):
                 float_value = float(modified_increment)
                 float_value += .01
                 modified_increment = str(round(float_value, 2))
-                print("\rincrement value = " + modified_increment, end="")
+                print("\rincrement value = {0:.2f}".format(float_value), end="")
                 continue
             elif key == "-":
                 float_value = float(modified_increment)
                 float_value -= .01
                 modified_increment = str(round(float_value, 2))
-                print("\rincrement value = " + modified_increment, end="")
+                print("\rincrement value = {0:.2f}".format(float_value), end="")
                 continue
             elif key == 'enter':
                 offset_accepted = True
@@ -52,19 +52,21 @@ def modify_increment(increment):
 class ZOffsetAdjuster:
     ABORTED = False
     BED_TEMP = 0
+    CURRENT_Z_OFFSET = ""
     EXTRUDER_TEMP = 0
-    INTER_CMD_SLEEP = 0.5
+    INTER_CMD_SLEEP = 0.1
     MOVEMENT_SPEED = "F4800"
     OFFSET_VALUE: float = 0.0
     OFFSET_INCREMENT = 0.0
     PRINTER_PORT = ""
     PRINTER = None
+    SERIAL_TIMEOUT = 30
     Z_OFFSET = 0.0
-    CURRENT_Z_OFFSET = ""
 
     def init_printer(self):
         # open printer for I/O
-        self.PRINTER = serial.Serial(self.PRINTER_PORT)
+        self.PRINTER = serial.Serial(self.PRINTER_PORT, timeout=self.SERIAL_TIMEOUT)
+        self.send_printer_cmd("M155 S0")  # disable temp reporting
         print("Printer port has been opened!")  # debug
 
     def send_printer_cmd(self, cmd, delay=INTER_CMD_SLEEP):
@@ -81,7 +83,7 @@ class ZOffsetAdjuster:
         for p in ports:
             print_device = p.device
             try:
-                test_port = serial.Serial(print_device, timeout=3)
+                test_port = serial.Serial(print_device, timeout=self.SERIAL_TIMEOUT)
                 test_port.write(b"M31 \r\n")
                 rsp = test_port.readline().decode("Ascii").rstrip()
                 test_port.close()
@@ -115,9 +117,9 @@ class ZOffsetAdjuster:
         print("Preheating bed...")
         printer = self.PRINTER
         reading = 1
+        self.send_printer_cmd("M155 S1")  # enable temp reporting
         self.send_printer_cmd("M140 S" + self.BED_TEMP)
-        time.sleep(3)  # gives printer a chance to power on bed heater
-        self.send_printer_cmd("M155 S1")
+        # TODO: needed? time.sleep(3)  # gives printer a chance to power on bed heater
         while reading:
             # Wait until there is data waiting in the serial buffer
             if printer.in_waiting > 0:
@@ -138,7 +140,7 @@ class ZOffsetAdjuster:
                 bed_heater_level = tokens2[1]
                 if bed_heater_level == '0' and float(current_bed_temp) >= float(self.BED_TEMP):
                     reading = 0
-        self.send_printer_cmd("M155 S0")
+        self.send_printer_cmd("M155 S0")  # disable temp reporting
         print("")
         return
 
@@ -147,9 +149,9 @@ class ZOffsetAdjuster:
         print("Preheating extruder...")
         printer = self.PRINTER
         reading = True
-        self.send_printer_cmd("M109 S" + self.EXTRUDER_TEMP)
-        time.sleep(5)  # gives printer a chance to power on extruder
         self.send_printer_cmd("M155 S1")
+        self.send_printer_cmd("M104 S" + self.EXTRUDER_TEMP)
+        # TODO: needed? time.sleep(5)  # gives printer a chance to power on extruder
         while reading:
             # Wait until there is data waiting in the serial buffer
             if printer.in_waiting > 0:
@@ -172,34 +174,49 @@ class ZOffsetAdjuster:
         return
 
     def send_sync_cmd(self, cmd, msg, delay=INTER_CMD_SLEEP):
+        # To get synchronous command, fills Marlin queue with 4 "no-op" commands,
+        # then waits for the correct number of "ok" responses
         print(msg, end="")
         time.sleep(delay)
+        num_oks = 0
         printer = self.PRINTER
-        reading = True
         self.send_printer_cmd(cmd)
-        while reading:
+        self.send_printer_cmd("M31")
+        self.send_printer_cmd("M31")
+        self.send_printer_cmd("M31")
+        self.send_printer_cmd("M31")
+        while num_oks < 5:
+            # Wait until there is data waiting in the serial buffer
+            if printer.in_waiting > 0:
+                # Read data out of the buffer until a carriage return / new line is found
+                prt_response = printer.readline().decode("Ascii").rstrip()
+                # print(prt_response)  # DEBUG
+                if prt_response == "ok":
+                    num_oks += 1
+        print("OK")
+
+    def home_printer(self):
+        # To get synchronous command, fills Marlin queue with 4 "no-op" commands,
+        # then waits for the correct number of "ok" responses
+        print("Homing printer...", end="")
+        num_oks = 0
+        prt_response = ""
+        printer = self.PRINTER
+        self.send_printer_cmd("G28")
+        self.send_printer_cmd("M31")
+        self.send_printer_cmd("M31")
+        self.send_printer_cmd("M31")
+        self.send_printer_cmd("M31")
+        while num_oks < 5:
             # Wait until there is data waiting in the serial buffer
             if printer.in_waiting > 0:
                 # Read data out of the buffer until a carriage return / new line is found
                 prt_response = printer.readline().decode("Ascii").rstrip()
                 if prt_response == 'ok':
-                    reading = False
-        print("OK")
-
-    def home_printer(self):
-        print("Homing printer...", end="")
-        prt_response = ""
-        printer = self.PRINTER
-        reading = True
-        self.send_printer_cmd("G28")
-        while reading:
-            # Wait until there is data waiting in the serial buffer
-            if printer.in_waiting > 0:
-                # Read data out of the buffer until a carriage return / new line is found
-                prt_response = printer.readline().decode("Ascii").rstrip()
-            # printer should send "ok" when homing has completed
-            if prt_response == 'ok':
-                reading = False
+                    num_oks += 1
+                else:
+                    print(".", end="")
+                # print(prt_response)  # debug
         print("OK")
 
     def adjust_z_offset(self):
@@ -224,7 +241,7 @@ class ZOffsetAdjuster:
         test_from_height = False  # when true, raises nozzle before testing offset
         increment_changed = False  # do not re-measure if only increment change
         while not offset_accepted:
-            print("\rOffset increment: " + increment + "\tOffset value: " + offset)
+            print("\rOffset increment: {0:.2f}\tOffset value: {1:.2f}".format(float(increment), float(offset)))
             if not increment_changed:
                 if test_from_height:
                     test_from_height = False
@@ -271,24 +288,21 @@ class ZOffsetAdjuster:
         if msg is not None:
             print(msg, end="")
         printer = self.PRINTER
+        num_oks = 0
         # issue the move command
         self.send_printer_cmd(move_command, delay)
-        # block further command processing until move has finished
-        self.send_printer_cmd("M400", delay)
-        # add a command to the queue: get print time
-        # will use the response to this command to determine that the move has finished
-        self.send_printer_cmd("M31", delay)
-        move_finished = False
-        while not move_finished:
-            time.sleep(0.5)
+        self.send_printer_cmd("G4 S1", 0)
+        self.send_printer_cmd("M31", 0)
+        self.send_printer_cmd("M31", 0)
+        self.send_printer_cmd("M31", 0)
+        while num_oks < 5:
             # Wait until there is data waiting in the serial buffer
             if printer.in_waiting > 0:
                 # Read data out of the buffer until a carriage return / new line is found
                 prt_response = printer.readline().decode("Ascii").rstrip()
-                if prt_response.startswith("echo:Print"):
-                    move_finished = True
-        if msg is not None:
-            print("OK")
+                if prt_response == "ok":
+                    num_oks += 1
+        print("OK")
 
     def finish_processing(self):
         if not self.ABORTED:
@@ -296,26 +310,29 @@ class ZOffsetAdjuster:
             self.send_sync_cmd("M211 S1", "\tre-enabling software endstops...")
             self.send_sync_cmd("G92 Z0", "\tsetting Z = 0 to current Z position...")
             cmd_str = "M851 Z" + str(round(self.Z_OFFSET, 2))
-            self.send_sync_cmd(cmd_str, "\tsaving Z-offset value...")
+            msg = "\tsetting Z-offset value to {0:.2f}".format(float(self.Z_OFFSET))
+            self.send_sync_cmd(cmd_str, msg)
             self.send_sync_cmd("M500", "\tsaving settings to EEPROM...")
-            print("\tturning off bed heater...")
-            self.send_printer_cmd("M140 S0")
-            print("\tturning off extruder heater...")
-            self.send_printer_cmd("M109 S0")
-            self.home_printer()
+            self.send_sync_cmd("M140 S0", "\tturning off bed heater...")
+            self.send_sync_cmd("M109 S0", "\tturning off extruder heater...")
+            self.send_sync_cmd("G0 Z10", "\traising nozzle...")
+            self.send_printer_cmd("M155 S1")  # enable temp reporting
             print("Finished, exiting...")
             exit(0)
         else:
             print("\nProcessing aborted...")
             self.send_sync_cmd("M211 S1", "\tre-enabling software endstops...")
-            print("\tturning off bed heater...")
-            self.send_printer_cmd("M140 S0")
-            print("\tturning off extruder heater...")
-            self.send_printer_cmd("M109 S0")
-            # TODO: restore old Z-offset here
-            print("\trestoring previous Z-offset...")
-            self.send_printer_cmd("M851 Z-" + self.CURRENT_Z_OFFSET)
-            self.home_printer()
+            self.send_sync_cmd("M140 S0", "\tturning off bed heater")
+            # print("\tturning off bed heater...")
+            # self.send_printer_cmd("M140 S0")
+            self.send_sync_cmd("M109 S0", "\tturning off extruder heater")
+            # print("\tturning off extruder heater...")
+            # self.send_printer_cmd("M109 S0")
+            previous_offset = self.CURRENT_Z_OFFSET
+            msg = "\trestoring previous Z-offset (" + self.CURRENT_Z_OFFSET + ")..."
+            self.send_sync_cmd("M851 Z-" + self.CURRENT_Z_OFFSET, msg)
+            # TODO: UNNEEDED? self.home_printer()
+            self.send_printer_cmd("M155 S1")  # enable temp reporting
             print("Exiting...")
             exit(1)
 
@@ -332,7 +349,10 @@ class ZOffsetAdjuster:
                 prt_response = printer.readline().decode("Ascii").rstrip()
             # printer should send "ok" when homing has completed
             if prt_response.startswith("Probe Offset"):
-                tokens = prt_response.split("Z-")
+                tokens = prt_response.split("Z")
+                current_offset = tokens[1]
+                if current_offset.startswith("-"):
+                    current_offset = current_offset[1:]
                 self.CURRENT_Z_OFFSET = tokens[1]
                 print(self.CURRENT_Z_OFFSET)
                 return
@@ -346,6 +366,11 @@ adjuster = ZOffsetAdjuster()
 adjuster.load_config()
 adjuster.find_printer()
 adjuster.init_printer()
+# TODO: UNNEEDED? adjuster.send_sync_cmd("G28", "Homing printer...", delay=0)  # DEBUG
+# DEBUG adjuster.home_printer()
+# DEBUG THIS DELAYS PROPERLY adjuster.send_sync_cmd("G28", "call to home printer...", delay=0)  # DEBUG
+# DEBUG adjuster.send_sync_move_cmd("G0 X75 F200", "move X...", delay=0)
+# DEBUG adjuster.send_sync_move_cmd("G0 X100 F200", "move X back...", delay=0)
 adjuster.save_current_z_offset()
 adjuster.preheat()
 adjuster.adjust_z_offset()

@@ -5,8 +5,8 @@
     },
     "temps": {
         "bed": "25",
-        "non-test bed": "60",
+        "_bed": "60",
         "extruder": "40",
-        "non-test extruder": "220"
+        "_extruder": "220"
     }
 }
