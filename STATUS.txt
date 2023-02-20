@@ -1,1 +1,3 @@
-2/16/23 - Script works, but gets an exception during exit method.
+2/20/23 - Added code to manually enter an offset, but enter key seems to get triggered by itself afterwards.
+
+last offset: 3.07

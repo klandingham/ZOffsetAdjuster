@@ -4,9 +4,9 @@
         "initial": "-2.00"
     },
     "temps": {
-        "bed": "25",
-        "_bed": "60",
-        "extruder": "40",
-        "_extruder": "220"
+        "_bed": "25",
+        "bed": "60",
+        "_extruder": "40",
+        "extruder": "220"
     }
 }
