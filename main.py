@@ -7,7 +7,8 @@ import serial
 import serial.tools.list_ports as port_list
 import time
 
-DEBUG = True
+DEBUG = False
+DEBUG_STRINGS = False
 
 
 def show_help():
@@ -16,6 +17,7 @@ def show_help():
     print("Key Commands:")
     print("\t    - => move nozzle lower and retest")
     print("\t    + => move nozzle higher and retest")
+    print("\t    f => toggle fine-tune mode (0.1 or 0.01 increments)")
     print("\t   up => increase move increment")
     print("\t down => decrease move increment")
     print("\t    r => repeat last test from height")
@@ -26,31 +28,31 @@ def show_help():
     print("\n")
 
 
-def modify_increment(increment):
-    print("")
-    print("Use + and - keys to change increment value, press ENTER when done.")
-    modified_increment = increment
-    print("increment value = {0:.2f}".format(float(modified_increment)), end="")
-    offset_accepted = False
-    while not offset_accepted:
-        event = keyboard.read_event()
-        if event.event_type == keyboard.KEY_DOWN:
-            key = event.name
-            if key == "+":
-                float_value = float(modified_increment)
-                float_value += .01
-                modified_increment = str(round(float_value, 2))
-                print("\rincrement value = {0:.2f}".format(float_value), end="")
-                continue
-            elif key == "-":
-                float_value = float(modified_increment)
-                float_value -= .01
-                modified_increment = str(round(float_value, 2))
-                print("\rincrement value = {0:.2f}".format(float_value), end="")
-                continue
-            elif key == 'enter':
-                offset_accepted = True
-    return modified_increment
+# def modify_increment(increment):
+#     print("")
+#     print("Use + and - keys to change increment value, press ENTER when done.")
+#     modified_increment = increment
+#     print("increment value = {0:.2f}".format(float(modified_increment)), end="")
+#     offset_accepted = False
+#     while not offset_accepted:
+#         event = keyboard.read_event()
+#         if event.event_type == keyboard.KEY_DOWN:
+#             key = event.name
+#             if key == "+":
+#                 float_value = float(modified_increment)
+#                 float_value += .01
+#                 modified_increment = str(round(float_value, 2))
+#                 print("\rincrement value = {0:.2f}".format(float_value), end="")
+#                 continue
+#             elif key == "-":
+#                 float_value = float(modified_increment)
+#                 float_value -= .01
+#                 modified_increment = str(round(float_value, 2))
+#                 print("\rincrement value = {0:.2f}".format(float_value), end="")
+#                 continue
+#             elif key == 'enter':
+#                 offset_accepted = True
+#     return modified_increment
 
 
 def clear_prompt_line():
@@ -61,6 +63,7 @@ class ZOffsetAdjuster:
     ABORTED = False
     BED_TEMP = 0
     CURRENT_Z_OFFSET = ""
+    DISPLAY_DELAY = 3  # length of time to show temporary message (secs)
     EXTRUDER_TEMP = 0
     INTER_CMD_SLEEP = 0.1
     MOVEMENT_SPEED = "F4800"
@@ -165,7 +168,8 @@ class ZOffsetAdjuster:
             if printer.in_waiting > 0:
                 # Read data out of the buffer until a carriage return / new line is found
                 prt_response = printer.readline().decode("Ascii").rstrip()
-                # # # # print(prt_response)  # DEBUG
+                if DEBUG_STRINGS:
+                    print(prt_response)
                 if prt_response.startswith("echo:busy"):
                     continue
                 tokens1 = prt_response.split()
@@ -202,7 +206,8 @@ class ZOffsetAdjuster:
             if printer.in_waiting > 0:
                 # Read data out of the buffer until a carriage return / new line is found
                 prt_response = printer.readline().decode("Ascii").rstrip()
-                # print(prt_response)  # DEBUG
+                if DEBUG_STRINGS:
+                    print(prt_response)
                 if prt_response == "ok":
                     num_oks += 1
         print("OK")
@@ -247,6 +252,7 @@ class ZOffsetAdjuster:
         print("Insert paper, press any key to continue...", end="")
         event = keyboard.read_event(suppress=True)
         print("")
+        fine_tune_mode = False
         offset = self.OFFSET_VALUE
         offset_float = float(offset)
         increment = self.OFFSET_INCREMENT
@@ -267,7 +273,8 @@ class ZOffsetAdjuster:
             event = keyboard.read_event()
             if event.event_type == keyboard.KEY_DOWN:
                 key = event.name
-                # DEBUG print(f'Pressed: {key}')  # debug
+                if DEBUG_STRINGS:
+                    print(f'Pressed: {key}')
                 # Note: using if's instead of case for older Pythons
                 if key.isdigit():
                     # event = None
@@ -292,11 +299,12 @@ class ZOffsetAdjuster:
                                 time.sleep(0.5)  # short delay for last digit to be displayed
                                 offset_entered = True
                     offset = manual_offset
-                if key == 'up' or key == 'down':
-                    new_increment = modify_increment(increment)
-                    if new_increment != increment:
-                        increment_changed = True
-                        increment = new_increment
+                # OBSOLETE
+                # elif key == 'up' or key == 'down':
+                #     new_increment = modify_increment(increment)
+                #     if new_increment != increment:
+                #         increment_changed = True
+                #         increment = new_increment
                 elif key == '-':  # move nozzle lower (make offset more negative)
                     offset_float = float(offset)
                     increment_float = float(increment)
@@ -309,6 +317,19 @@ class ZOffsetAdjuster:
                     offset = str(round(offset_float, 2))
                 elif key == 'r':  # repeat last measurement
                     test_from_height = True
+                    continue
+                elif key == 'f':  # toggle fine-tune mode
+                    clear_prompt_line()
+                    if fine_tune_mode:
+                        fine_tune_mode = False
+                        increment = self.OFFSET_INCREMENT
+                        print("Adjustment increment reset to {0:1.1f}".format(float(increment)), end="")
+                    else:
+                        fine_tune_mode = True
+                        increment = 0.01
+                        print("Adjustment increment set to {0:1.2f}".format(float(increment)), end="")
+                    time.sleep(self.DISPLAY_DELAY)
+                    clear_prompt_line()
                     continue
                 elif key == 'h':
                     show_help()
