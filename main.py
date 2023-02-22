@@ -7,6 +7,8 @@ import serial
 import serial.tools.list_ports as port_list
 import time
 
+DEBUG = True
+
 
 def show_help():
     print("")
@@ -112,8 +114,12 @@ class ZOffsetAdjuster:
         print("Loading configuration...", end="")
         with open("config.json", "r") as cfg:
             config = json.load(cfg)
-        self.BED_TEMP = config["temps"]["bed"]
-        self.EXTRUDER_TEMP = config["temps"]["extruder"]
+        if DEBUG:  # use lower temps for debugging
+            self.BED_TEMP = "25"
+            self.EXTRUDER_TEMP = "40"
+        else:
+            self.BED_TEMP = config["temps"]["bed"]
+            self.EXTRUDER_TEMP = config["temps"]["extruder"]
         self.OFFSET_VALUE = config["offset"]["initial"]
         self.OFFSET_INCREMENT = config["offset"]["increment"]
         print("ok.")
@@ -239,6 +245,7 @@ class ZOffsetAdjuster:
     def obtain_z_offset(self):
         print("\nBeginning Z-offset testing...\n")
         print("Insert paper, press any key to continue...", end="")
+        event = keyboard.read_event(suppress=True)
         print("")
         offset = self.OFFSET_VALUE
         offset_float = float(offset)
@@ -307,7 +314,8 @@ class ZOffsetAdjuster:
                     show_help()
                 elif key == 'enter':
                     self.Z_OFFSET = offset_float
-                    print("Z-offset value of " + str(round(self.Z_OFFSET, 2)) + " accepted.")
+                    print("\rOffset = {0:.2f}, wait...".format(float(offset)), end="")
+                    print("\n\nZ-offset has been set to {0:.2f}".format((round(self.Z_OFFSET, 2))))
                     break
                 elif key == 'q':
                     self.ABORTED = True
@@ -340,7 +348,7 @@ class ZOffsetAdjuster:
             self.send_sync_cmd("M211 S1", "\tre-enabling software endstops...")
             self.send_sync_cmd("G92 Z0", "\tsetting Z = 0 to current Z position...")
             cmd_str = "M851 Z" + str(round(self.Z_OFFSET, 2))
-            msg = "\tsetting Z-offset value to {0:.2f}".format(float(self.Z_OFFSET))
+            msg = "\tsetting Z-offset value to {0:.2f}...".format(round(float(self.Z_OFFSET), 2))
             self.send_sync_cmd(cmd_str, msg)
             self.send_sync_cmd("M500", "\tsaving settings to EEPROM...")
             self.send_sync_cmd("M140 S0", "\tturning off bed heater...")

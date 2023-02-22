@@ -1,16 +1,13 @@
 TODO:
 
-- When program starts, temp reporting should be disabled. When preheating, it should be enabled,
-  then disabled. On script exit, it should be enabled. This should help with response processing.
-
-- Before doing anything, script should obtain current value of Z-offset and restore it if user aborts
+- After testing, decided the interface to adjust increment is cumbersome. Almost always want to fine
+  tune the offset with .01 increments after adjusting with 0.1 increments. So I'm going to add an 'f'
+  command for "fine-tune". Making it a toggle.
+:w
 
 - Needs general clean up of code.
 
 - Still want to make an installable package for this, so it will run on any Windows machine regardless
   of whether Python is installed.
-
-- Add behavior when printer can't be found or is found but can't be opened (e.g., another app using
-  the port).
 
 - (Maybe) Add bed X,Y dimensions to the config file and use those.
