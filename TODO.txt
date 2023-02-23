@@ -1,9 +1,16 @@
 TODO:
 
+- Tested this code with the AM8 printer...does not work. Had to specify a serial baud rate
+  of 115200, else I got garbage (test this setting with the Ender 3). After that, commands that
+  I sent it got mysterious responses, even though the same commands issued with Repetier Host
+  got expected responses. I'll have to write a separate serial test script to figure out what's
+  going on with the AM8. (Note: I have been using a Remote Desktop to laddie to test with the AM8.
+  But this is incredibly slow...try it with a VNC setup. The code has been changed there but nothing
+  has been committed yet.
+
 - After testing, decided the interface to adjust increment is cumbersome. Almost always want to fine
   tune the offset with .01 increments after adjusting with 0.1 increments. So I'm going to add an 'f'
   command for "fine-tune". Making it a toggle.
-:w
 
 - Needs general clean up of code.
 
