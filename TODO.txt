@@ -1,5 +1,19 @@
 TODO:
 
+- After some testing, I think the interface for adjusting Z-offset is too clunky. In particular,
+  every time you make an offset adjustment the code does a test, which makes adjustment too slow.
+  I want to change the command interface as follows:
+    - remove "modify increment" mode and default to 0.01
+    - implement two modes: "adjust" and "test"
+    - press Enter to switch modes (should display current mode)
+    - in "adjust" mode
+        - use +- keys to change offset
+        - no other input except Enter will be accepted
+    - in "test" mode
+        - Enter: raise and lower to test offset
+        - * to accept offset and exit
+        - no other input accepted
+
 - Tested this code with the AM8 printer...does not work. Had to specify a serial baud rate
   of 115200, else I got garbage (test this setting with the Ender 3). After that, commands that
   I sent it got mysterious responses, even though the same commands issued with Repetier Host

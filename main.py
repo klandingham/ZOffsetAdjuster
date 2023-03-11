@@ -28,33 +28,6 @@ def show_help():
     print("\n")
 
 
-# def modify_increment(increment):
-#     print("")
-#     print("Use + and - keys to change increment value, press ENTER when done.")
-#     modified_increment = increment
-#     print("increment value = {0:.2f}".format(float(modified_increment)), end="")
-#     offset_accepted = False
-#     while not offset_accepted:
-#         event = keyboard.read_event()
-#         if event.event_type == keyboard.KEY_DOWN:
-#             key = event.name
-#             if key == "+":
-#                 float_value = float(modified_increment)
-#                 float_value += .01
-#                 modified_increment = str(round(float_value, 2))
-#                 print("\rincrement value = {0:.2f}".format(float_value), end="")
-#                 continue
-#             elif key == "-":
-#                 float_value = float(modified_increment)
-#                 float_value -= .01
-#                 modified_increment = str(round(float_value, 2))
-#                 print("\rincrement value = {0:.2f}".format(float_value), end="")
-#                 continue
-#             elif key == 'enter':
-#                 offset_accepted = True
-#     return modified_increment
-
-
 def clear_prompt_line():
     print("\r                                                                                                \r", end="")
 
@@ -66,52 +39,61 @@ class ZOffsetAdjuster:
     DISPLAY_DELAY = 3  # length of time to show temporary message (secs)
     EXTRUDER_TEMP = 0
     INTER_CMD_SLEEP = 0.1
+    MACHINE_FIRMWARE_NAME = ""
+    MACHINE_FIRMWARE_VERSION = ""
     MOVEMENT_SPEED = "F4800"
     OFFSET_VALUE: float = 0.0
     OFFSET_INCREMENT = 0.0
     PRINTER_PORT = ""
     PRINTER = None
+    SERIAL_SPEED = 115200
     SERIAL_TIMEOUT = 30
     Z_OFFSET = 0.0
 
     def init_printer(self):
-        # open printer for I/O
-        self.PRINTER = serial.Serial(self.PRINTER_PORT, timeout=self.SERIAL_TIMEOUT)
-        self.send_printer_cmd("M155 S0")  # disable temp reporting
-        print("Printer port has been opened!")  # debug
+        if self.PRINTER_PORT != "":
+            print("Printer port set to " + self.PRINTER_PORT + " in config file.")
+            printer_port = serial.Serial(self.PRINTER_PORT, baudrate=self.SERIAL_SPEED, timeout=self.SERIAL_TIMEOUT)
+            self.PRINTER = printer_port
+            self.get_firmware_version()
+            return True
+        print("Searching serial ports for a printer, please wait...", end='')
+        printer_found = False
+        ports = list(port_list.comports())
+        for p in ports:
+            test_port = p.device
+            try:
+                printer_port = serial.Serial(test_port, baudrate=self.SERIAL_SPEED, timeout=self.SERIAL_TIMEOUT)
+                # if we reach here, we've found a printer
+                printer_found = True
+                self.PRINTER = printer_port
+                # flush the initial output from the printer
+                time.sleep(5)
+                for i in range(60):
+                    time.sleep(0.05)
+                    if printer_port.in_waiting:
+                        rsp = printer_port.readline().decode("Ascii").rstrip()
+                        if DEBUG_STRINGS:
+                            print(str(i) + ": >" + rsp + "<")
+                    else:
+                        if DEBUG_STRINGS:
+                            print(str(i) + ": no more data")
+            except serial.SerialException as e:
+                continue
+        if printer_found:
+            print("printer detected on port " + test_port)
+            self.get_firmware_version()
+        return printer_found
 
-    def send_printer_cmd(self, cmd, delay=INTER_CMD_SLEEP):
+    def send_printer_cmd(self, cmd, msg=None, delay=INTER_CMD_SLEEP, ack=False):
         time.sleep(delay)
+        if DEBUG_STRINGS:
+            print("Sending: " + cmd)
         cmd_str = b''
         cmd_str += cmd.encode("Ascii")
         cmd_str += b' \r\n'
         self.PRINTER.write(cmd_str)
 
-    def find_printer(self):
-        print("Searching serial ports for a printer, please wait...", end='')
-        printer_found = False
-        ports = list(port_list.comports())
-        for p in ports:
-            print_device = p.device
-            try:
-                test_port = serial.Serial(print_device, timeout=self.SERIAL_TIMEOUT)
-                test_port.write(b"M31 \r\n")
-                rsp = test_port.readline().decode("Ascii").rstrip()
-                test_port.close()
-            except serial.SerialException as e:
-                if e.args[0].startswith("could not open"):
-                    print("\ncould not open port " + p.name + ", does another program have it open?")
-                continue
-            if "T:" in rsp:
-                printer_found = True
-            if rsp.startswith("echo:Print"):
-                printer_found = True
-            if printer_found:
-                print("found a printer at port " + test_port.name + ".")
-                self.PRINTER_PORT = test_port.name
-                return
-        print("no printers found, exiting!")
-        exit(1)
 
     def load_config(self):
         print("Loading configuration...", end="")
@@ -125,6 +107,9 @@ class ZOffsetAdjuster:
             self.EXTRUDER_TEMP = config["temps"]["extruder"]
         self.OFFSET_VALUE = config["offset"]["initial"]
         self.OFFSET_INCREMENT = config["offset"]["increment"]
+        printer_port = config["printer_port"]["port"]
+        if printer_port != "null":
+            self.PRINTER_PORT = printer_port
         print("ok.")
 
     def preheat_bed(self):
@@ -189,7 +174,7 @@ class ZOffsetAdjuster:
         print("")
         return
 
-    def send_sync_cmd(self, cmd, msg, delay=INTER_CMD_SLEEP):
+    def send_sync_cmd(self, cmd, msg, delay=INTER_CMD_SLEEP, ack=False):
         # To get synchronous command, fills Marlin queue with 4 "no-op" commands,
         # then waits for the correct number of "ok" responses
         print(msg, end="")
@@ -299,12 +284,6 @@ class ZOffsetAdjuster:
                                 time.sleep(0.5)  # short delay for last digit to be displayed
                                 offset_entered = True
                     offset = manual_offset
-                # OBSOLETE
-                # elif key == 'up' or key == 'down':
-                #     new_increment = modify_increment(increment)
-                #     if new_increment != increment:
-                #         increment_changed = True
-                #         increment = new_increment
                 elif key == '-':  # move nozzle lower (make offset more negative)
                     offset_float = float(offset)
                     increment_float = float(increment)
@@ -391,7 +370,7 @@ class ZOffsetAdjuster:
 
     def save_current_z_offset(self):
         print("Saving current Z-offset value: ", end="")
-        prt_response = ""
+        current_offset = ""
         printer = self.PRINTER
         reading = True
         self.send_printer_cmd("M851")
@@ -400,25 +379,58 @@ class ZOffsetAdjuster:
             if printer.in_waiting > 0:
                 # Read data out of the buffer until a carriage return / new line is found
                 prt_response = printer.readline().decode("Ascii").rstrip()
-            # printer should send "ok" when homing has completed
-            if prt_response.startswith("Probe Offset"):
-                tokens = prt_response.split("Z")
-                current_offset = tokens[1]
-                if current_offset.startswith("-"):
-                    current_offset = current_offset[1:]
-                self.CURRENT_Z_OFFSET = tokens[1]
-                print(self.CURRENT_Z_OFFSET)
-                return
+                if DEBUG_STRINGS:
+                    print(prt_response)
+                if prt_response == "ok":
+                    reading = False
+                    continue
+                if "Probe Z Offset" in prt_response:  # Marlin 1.1.9
+                    tokens = prt_response.split(":")
+                    current_offset = tokens[2].strip()
+                elif "Probe Offset" in prt_response:  # Marlin 2.0.7.2
+                    tokens = prt_response.split()
+                    current_offset = tokens[4].split("-")[1]
+        self.CURRENT_Z_OFFSET = current_offset
+        # if the Z probe offset is already set, start with that instead of the default in config
+        if float(current_offset) > 0.5:
+            self.OFFSET_VALUE = current_offset
+        print(self.CURRENT_Z_OFFSET)
 
     def preheat(self):
         self.preheat_bed()
         self.preheat_extruder()
 
+    def get_firmware_version(self):
+        print("Checking printer firmware version: ", end="")
+        prt_response = ""
+        printer = self.PRINTER
+        reading = True
+        self.send_printer_cmd("M115")
+        while reading:
+            # Wait until there is data waiting in the serial buffer
+            if printer.in_waiting > 0:
+                # Read data out of the buffer until a carriage return / new line is found
+                prt_response = printer.readline().decode("Ascii").rstrip()
+                if DEBUG_STRINGS:
+                    print(prt_response)
+                if prt_response == "ok":
+                    reading = False
+                    continue
+                if prt_response.startswith("FIRMWARE_NAME"):
+                    tokens = prt_response.split()
+                    self.MACHINE_FIRMWARE_NAME = tokens[0].split(":")[1]
+                    self.MACHINE_FIRMWARE_VERSION = tokens[1]
+        if self.MACHINE_FIRMWARE_NAME != "":
+            print(self.MACHINE_FIRMWARE_NAME + " " + self.MACHINE_FIRMWARE_VERSION)
+
 
 adjuster = ZOffsetAdjuster()
 adjuster.load_config()
-adjuster.find_printer()
-adjuster.init_printer()
+# adjuster.find_printer()
+status = adjuster.init_printer()
+if not status:
+    print("could not connect to a printer, no printer found or port busy.  Exiting.")
+    exit(1)
 adjuster.save_current_z_offset()
 adjuster.preheat()
 adjuster.adjust_z_offset()

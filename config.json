@@ -6,5 +6,9 @@
     "temps": {
         "bed": "60",
         "extruder": "220"
+    },
+    "printer_port": {
+        "port": "COM4",
+        "_port": "null"
     }
 }
